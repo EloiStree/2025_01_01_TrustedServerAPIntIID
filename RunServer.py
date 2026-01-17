@@ -1,4 +1,4 @@
-
+# pip install --upgrade tornado websockets asyncio
 # Websocket: ws://raspberrypi.local:4616
 
 import json
@@ -36,7 +36,7 @@ if bool_is_in_terminal_mode:
     """
 
 
-
+bool_use_udp_redirection = False
 int_max_byte_size = 16
 
 # 4615 IS RESERVED FOR PUSH IID GATE WITH CRYPTO HANDSHAKE
@@ -117,20 +117,30 @@ queue_broadcast_byte_message = queue.Queue()
  
  
 async def relay_iid_message_as_local_udp_thread(byte):
-    print(f"Relay UDP {byte}")
-    for port in broadcast_port_gates:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.sendto(byte, (broadcast_ip_gate, port))
-        sock.close()
-        
-
+    try:
+        print(f"Relay UDP {byte}")
+        for port in broadcast_port_gates:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.sendto(byte, (broadcast_ip_gate, port))
+            sock.close()
+    except Exception as e:
+        print(f"UDP RELAY ERROR: {e}")
+        traceback.print_exc()
+            
+int_push_count = 0
 async def push_byte_or_close( user: UserHandshake,  b: bytes):
+    global int_push_count
+    int_push_count+=1
+    print(f"Push count: {int_push_count}")
     if user is None or user.is_connection_lost():
         return
     try:
+        ## Check buffer size before write message
+        
         await user.websocket.write_message(b, binary=True)
     except tornado.websocket.WebSocketClosedError:
-        print(f"WebSocketClosedError: Connection closed for user {user.index}")
+
+        print(f"WebSocketClosedError: Connection closed for user ") #{user.index}")
         user.websocket.close()
         remove_user_from_connected(user)
         
@@ -169,9 +179,11 @@ async def push_waiting_byte_message():
     
 async def push_waiting_byte_iid_message():
     
+    
     while not queue_broadcast_byte_iid_message.empty():
         message = queue_broadcast_byte_iid_message.get()
-        relay_iid_message_as_local_udp_thread(message)
+        if bool_use_udp_redirection:
+            await relay_iid_message_as_local_udp_thread(message)
         for user in list_of_user_connected:
             await push_byte_or_close(user, message)
                 
@@ -317,6 +329,7 @@ async def udp_async_server():
 def loop_udp_server():
     while True:
         try :
+            termnial_print("WAIT FOR MESSAGES START")
             asyncio.run(udp_async_server())
         except Exception as e:
             termnial_print (f"RELAYER CRASHED: {e}")
@@ -348,6 +361,8 @@ if __name__ == "__main__":
     server_thread.daemon = True 
     server_thread.start()
     
+
+    tornado.websocket.WebSocketHandler.max_message_size = 100 * 1024 * 1024
 
     while True:
         try:
